@@ -1,5 +1,4 @@
-telethon==1.36.0
+python-telegram-bot[webhooks]==21.10
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 httpx==0.27.2
-cryptg==0.4.0
