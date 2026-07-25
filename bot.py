@@ -574,15 +574,8 @@ def main():
     except:
         pass
     
-    # Run
-    logger.info("Bot starting...")
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=BOT_TOKEN,
-        webhook_url=f"https://devstoolsbot.up.railway.app/{BOT_TOKEN}",
-        secret_token="devstoolsbot2026"
-    )
+    logger.info("Bot starting with polling...")
+    app.run_polling(allowed_updates=["message", "callback_query"])
 
 if __name__ == "__main__":
     main()
