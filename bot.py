@@ -1,594 +1,470 @@
-import os, sys, json, logging, asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-import httpx
+import os, sys, json, re, logging
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+import uvicorn, httpx
 
-# Config
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-API_BASE = os.environ.get("API_BASE", "https://osint.yukiapi.site/api")
-PORT = int(os.environ.get("PORT", 8080))
+# ─── Telethon ───
+from telethon import TelegramClient, events
+from telethon.tl.types import Message as TeleMessage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# ─── START ───
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    msg = (
-        f"👋 **Hey {user.first_name}!**\n\n"
-        f"🕵️ **Dev's OSINT Bot** — 40+ Legal Intelligence Tools\n\n"
-        f"🔍 **OSINT:** `/ip` `/email` `/phone` `/dns` `/whois` `/subdomain` `/detect` `/breach` `/ghuser` `/wayback` `/headers`\n\n"
-        f"🛠 **Utilities:** `/hash` `/base64` `/uuid` `/qr` `/currency` `/translate` `/weather` `/pincode` `/password` `/portscan` `/ifsc` `/ssl`\n\n"
-        f"🇮🇳 **India:** `/pan` `/gstin` `/voter` `/aadhaar` `/ration` `/samagra` `/school` `/vehicle` `/challan`\n\n"
-        f"📚 **Help:** `/help` — all commands\n"
-        f"⚙️ **Tools:** `/tools` — category-wise\n\n"
-        f"⚡ Powered by @hostillbot"
-    )
-    kb = [
-        [InlineKeyboardButton("📡 API Docs", url="https://osint.yukiapi.site/docs"),
-         InlineKeyboardButton("🐙 GitHub", url="https://github.com/SUDEEPBOTS/YUKI-OSINT-API")],
-        [InlineKeyboardButton("📢 Channel", url="https://t.me/sudeep_1435"),
-         InlineKeyboardButton("👨‍💻 Owner", url="https://t.me/hostillbot")]
-    ]
-    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+# ─── Config ───
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+API_ID = int(os.environ.get("API_ID", 38674666))
+API_HASH = os.environ.get("API_HASH", "b4f0fbf8fb560c4bc9e7b9f3698e474c")
+API_BASE = os.environ.get("API_BASE", "https://osint.yukiapi.site/api")
+PORT = int(os.environ.get("PORT", 8080))
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://devstoolsbot.up.railway.app")
 
-# ─── HELP ───
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "**📚 All Commands**\n\n"
-        "**🔍 OSINT**\n"
-        "`/ip [ip]` — IP geolocation & ISP\n"
-        "`/email <email> [deep]` — Full email OSINT\n"
-        "`/phone <number>` — Phone carrier info\n"
-        "`/dns <domain>` — DNS records (A, MX, NS)\n"
-        "`/whois <domain>` — Domain WHOIS info\n"
-        "`/subdomain <domain>` — Subdomain finder\n"
-        "`/detect <domain>` — Website hosting detect\n"
-        "`/breach <email>` — Breach check (HIBP)\n"
-        "`/ghuser <username>` — GitHub user info\n"
-        "`/wayback <domain>` — Wayback Machine history\n"
-        "`/headers <url>` — HTTP headers check\n"
-        "`/ssl <domain>` — SSL cert check\n"
-        "`/portscan <host>` — Port scanner\n\n"
-        "**🛠 Utilities**\n"
-        "`/hash <text>` — Generate hashes\n"
-        "`/base64 encode|decode <text>` — Base64\n"
-        "`/uuid [count]` — UUID generator\n"
-        "`/qr <text>` — QR code generator\n"
-        "`/currency <amount> <from> <to>` — Currency convert\n"
-        "`/translate <text> [to]` — Translation\n"
-        "`/weather <city>` — Weather\n"
-        "`/pincode <code>` — PIN code info\n"
-        "`/password <pass>` — Password strength\n"
-        "`/ifsc <code>` — IFSC bank lookup\n\n"
-        "**🇮🇳 India**\n"
-        "`/pan <pan>` — PAN card info\n"
-        "`/gstin <gstin>` — GST registration\n"
-        "`/voter <epic>` — Voter ID\n"
-        "`/aadhaar <number>` — Aadhaar verify (format)\n"
-        "`/ration <number> [state]` — Ration card\n"
-        "`/samagra <mobile>` — MP Samagra\n"
-        "`/school <code>` — UDISE+ school\n"
-        "`/vehicle <reg>` — Vehicle RC\n"
-        "`/challan <reg>` — e-Challan info\n\n"
-        "**ℹ️** Use `/tools` for category-wise menu"
-    )
-    await update.message.reply_text(text, parse_mode="Markdown")
+# ─── FastAPI ───
+app = FastAPI(title="DevsToolsBot")
 
-# ─── TOOLS ───
-async def tools(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = [
-        [InlineKeyboardButton("🔍 OSINT", callback_data="cat_osint"),
-         InlineKeyboardButton("🛠 Utilities", callback_data="cat_utils")],
-        [InlineKeyboardButton("🇮🇳 India", callback_data="cat_india"),
-         InlineKeyboardButton("🌐 Web Tools", callback_data="cat_web")],
-        [InlineKeyboardButton("⚡ Quick Links", callback_data="cat_links")]
-    ]
-    await update.message.reply_text("**📂 Select Category:**", parse_mode="Markdown", 
-        reply_markup=InlineKeyboardMarkup(kb))
+# ─── Telethon Client ───
+bot = TelegramClient("bot_session", API_ID, API_HASH)
 
-# ─── API CALL ───
+# ─── API Helper ───
 async def api_get(endpoint: str, params: dict = None) -> dict:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(f"{API_BASE}/{endpoint}", params=params)
-            if resp.status_code == 200:
-                return resp.json()
-            return {"status": "error", "message": f"HTTP {resp.status_code}"}
+            return resp.json() if resp.status_code == 200 else {"status":"error","message":f"HTTP {resp.status_code}"}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status":"error","message":str(e)}
 
-def fmt_json(data: dict, title: str = "") -> str:
-    """Format API response for Telegram"""
+def fmt_response(data: dict, title: str = "") -> str:
     if not data or data.get("status") == "error":
-        return f"❌ **Error:** {data.get('message', 'Unknown error')}"
-    
-    if "data" in data:
-        d = data["data"]
-    else:
-        d = data
-    
-    parts = [f"**{title}**" if title else ""]
-    
+        return f"❌ {data.get('message','Error')}"
+    d = data.get("data", data)
+    lines = [f"**{title}**"] if title else []
     def flatten(obj, prefix=""):
-        lines = []
+        res = []
         if isinstance(obj, dict):
             for k, v in obj.items():
-                if isinstance(v, (dict, list)):
-                    if v:
-                        lines.append(f"\n**{k}:**")
-                        lines.extend(flatten(v, prefix))
-                elif v is not None and v != "" and v != []:
-                    k_display = k.replace("_", " ").title()
-                    lines.append(f"`{k_display}:` {str(v)[:500]}")
+                if v is None or v == "" or v == []: continue
+                kd = k.replace("_"," ").title()
+                if isinstance(v, (dict,list)) and v:
+                    res.append(f"\n**{kd}:**")
+                    res.extend(flatten(v, prefix))
+                else:
+                    res.append(f"`{kd}:` {str(v)[:300]}")
         elif isinstance(obj, list):
             for i, item in enumerate(obj[:10]):
-                if isinstance(item, dict):
-                    lines.extend(flatten(item, f"{prefix}{i+1}."))
-                else:
-                    lines.append(f"• {str(item)[:200]}")
-        return lines
-    
-    lines = flatten(d)
-    text = "\n".join(lines)
-    
-    if len(text) > 4000:
-        text = text[:3997] + "..."
-    
-    return parts[0] + "\n" + text if parts[0] else text
+                res.append(f"• {str(item)[:200]}" if not isinstance(item,dict) else "")
+        return res
+    body = "\n".join(flatten(d))
+    text = lines[0] + "\n" + body if lines else body
+    return text[:4000] if len(text) > 4000 else text
 
-# ─── OSINT COMMANDS ───
-async def cmd_ip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    ip = " ".join(context.args) if context.args else None
+# ─── BOT COMMANDS ───
+@bot.on(events.NewMessage(pattern="/start"))
+async def start(event):
+    kb = {
+        "inline_keyboard": [
+            [{"text": "🔍 OSINT", "callback_data": "cat_osint"},
+             {"text": "🛠 Utilities", "callback_data": "cat_utils"}],
+            [{"text": "🇮🇳 India", "callback_data": "cat_india"},
+             {"text": "🌐 Web", "callback_data": "cat_web"}],
+            [{"text": "📡 API Docs", "url": "https://osint.yukiapi.site/docs"},
+             {"text": "🐙 GitHub", "url": "https://github.com/SUDEEPBOTS/YUKI-OSINT-API"}]
+        ]
+    }
+    msg = (
+        f"👋 **Hey {event.sender.first_name}!**\n\n"
+        f"🕵️ **Dev's OSINT Bot** — 40+ Legal Intelligence Tools\n\n"
+        f"🔍 `/ip` `/email` `/phone` `/dns` `/whois` `/subdomain` `/detect`\n"
+        f"🛠 `/hash` `/base64` `/uuid` `/currency` `/translate` `/weather`\n"
+        f"🇮🇳 `/pan` `/gstin` `/voter` `/aadhaar` `/vehicle` `/pincode`\n\n"
+        f"📚 `/help` — All commands\n⚙️ `/tools` — Category menu\n\n"
+        f"⚡ Powered by @hostillbot"
+    )
+    await event.reply(msg, parse_mode="md", buttons=kb)
+
+@bot.on(events.NewMessage(pattern="/help"))
+async def help(event):
+    text = (
+        "**📚 All Commands**\n\n"
+        "**🔍 OSINT**\n"
+        "`/ip [ip]` — IP geolocation\n"
+        "`/email <email>` — Full email OSINT\n"
+        "`/phone <num>` — Phone carrier\n"
+        "`/dns <domain>` — DNS records\n"
+        "`/whois <domain>` — WHOIS lookup\n"
+        "`/subdomain <domain>` — Subdomain finder\n"
+        "`/detect <domain>` — Hosting detect\n"
+        "`/breach <email>` — Breach check\n"
+        "`/ghuser <user>` — GitHub user info\n"
+        "`/wayback <domain>` — Wayback history\n"
+        "`/headers <url>` — HTTP headers\n"
+        "`/ssl <domain>` — SSL check\n"
+        "`/portscan <host>` — Port scanner\n\n"
+        "**🛠 Utilities**\n"
+        "`/hash <text>` — Hash generator\n"
+        "`/base64 e/d <text>` — Base64\n"
+        "`/uuid [n]` — UUID generator\n"
+        "`/qr <text>` — QR code\n"
+        "`/currency <amt> <from> <to>` — Convert\n"
+        "`/translate <text> [lang]` — Translate\n"
+        "`/weather <city>` — Weather\n"
+        "`/pincode <code>` — PIN lookup\n"
+        "`/password <pass>` — Password strength\n"
+        "`/ifsc <code>` — IFSC details\n\n"
+        "**🇮🇳 India**\n"
+        "`/pan <pan>` — PAN info\n"
+        "`/gstin <gstin>` — GST details\n"
+        "`/voter <epic>` — Voter ID\n"
+        "`/aadhaar <num>` — Aadhaar verify\n"
+        "`/ration <num>` — Ration card\n"
+        "`/vehicle <reg>` — Vehicle RC\n"
+        "`/school <code>` — School info"
+    )
+    await event.reply(text, parse_mode="md")
+
+@bot.on(events.NewMessage(pattern="/tools"))
+async def tools(event):
+    kb = {
+        "inline_keyboard": [
+            [{"text": "🔍 OSINT", "callback_data": "cat_osint"},
+             {"text": "🛠 Utilities", "callback_data": "cat_utils"}],
+            [{"text": "🇮🇳 India", "callback_data": "cat_india"},
+             {"text": "🌐 Web Tools", "callback_data": "cat_web"}]
+        ]
+    }
+    await event.reply("**📂 Select Category:**", parse_mode="md", buttons=kb)
+
+# ─── OSINT Commands ───
+@bot.on(events.NewMessage(pattern=r"/ip ?(.*)"))
+async def cmd_ip(event):
+    ip = event.pattern_match.group(1).strip() or None
     data = await api_get("ip", {"ip": ip} if ip else {})
-    await update.message.reply_text(fmt_json(data, "🌐 IP Info"), parse_mode="Markdown")
+    await event.reply(fmt_response(data, "🌐 IP Info"), parse_mode="md")
 
-async def cmd_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/email user@example.com` or `/email user@example.com deep`", parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/email ?(.*)"))
+async def cmd_email(event):
+    args = event.pattern_match.group(1).strip()
+    if not args:
+        await event.reply("Usage: `/email user@example.com`")
         return
-    email = context.args[0]
-    deep = "deep" in context.args
+    parts = args.split()
+    email = parts[0]
+    deep = "deep" in parts
     data = await api_get("email", {"email": email, "deep": str(deep).lower()})
-    await update.message.reply_text(fmt_json(data, f"📧 Email OSINT — {email}"), parse_mode="Markdown")
+    await event.reply(fmt_response(data, f"📧 Email — {email}"), parse_mode="md")
 
-async def cmd_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/phone 9876543210`", parse_mode="Markdown")
-        return
-    data = await api_get("phone", {"phone": context.args[0]})
-    await update.message.reply_text(fmt_json(data, "📞 Phone Info"), parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/phone ?(.*)"))
+async def cmd_phone(event):
+    num = event.pattern_match.group(1).strip()
+    if not num: return await event.reply("Usage: `/phone 9876543210`")
+    data = await api_get("phone", {"phone": num})
+    await event.reply(fmt_response(data, "📞 Phone"), parse_mode="md")
 
-async def cmd_dns(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/dns google.com`", parse_mode="Markdown")
-        return
-    data = await api_get("dns", {"domain": context.args[0]})
-    await update.message.reply_text(fmt_json(data, "🌐 DNS Lookup"), parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/dns ?(.*)"))
+async def cmd_dns(event):
+    d = event.pattern_match.group(1).strip()
+    if not d: return await event.reply("Usage: `/dns google.com`")
+    data = await api_get("dns", {"domain": d})
+    await event.reply(fmt_response(data, "🌐 DNS"), parse_mode="md")
 
-async def cmd_whois(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/whois google.com`", parse_mode="Markdown")
-        return
-    data = await api_get("whois", {"domain": context.args[0]})
-    await update.message.reply_text(fmt_json(data, "🔍 WHOIS Info"), parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/whois ?(.*)"))
+async def cmd_whois(event):
+    d = event.pattern_match.group(1).strip()
+    if not d: return await event.reply("Usage: `/whois google.com`")
+    data = await api_get("whois", {"domain": d})
+    await event.reply(fmt_response(data, "🔍 WHOIS"), parse_mode="md")
 
-async def cmd_subdomain(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/subdomain google.com`", parse_mode="Markdown")
-        return
-    data = await api_get("subdomain", {"domain": context.args[0], "limit": 20})
+@bot.on(events.NewMessage(pattern=r"/subdomain ?(.*)"))
+async def cmd_subdomain(event):
+    d = event.pattern_match.group(1).strip()
+    if not d: return await event.reply("Usage: `/subdomain google.com`")
+    data = await api_get("subdomain", {"domain": d, "limit": 15})
     if data.get("status") == "success":
-        d = data
-        text = (
-            f"**🔍 Subdomains — {d['domain']}**\n"
-            f"`Checked:` {d['checked']} | `Found:` {d['found']}\n"
-            f"`Real:` {d.get('alive_real_services',0)} | `CF Proxy:` {d.get('cloudflare_proxied_only',0)}\n\n"
-        )
-        for s in d.get("subdomains", [])[:15]:
-            lbl = s.get("alive_label", "?")
-            icon = "🟢" if lbl == "alive" else "🟡" if lbl == "cloudflare_proxy" else "⚫"
+        dd = data
+        text = f"**🔍 Subdomains — {dd['domain']}**\n`Real:` {dd.get('alive_real_services',0)} | `CF Proxy:` {dd.get('cloudflare_proxied_only',0)} | `Dead:` {dd.get('dead',0)}\n\n"
+        for s in dd.get("subdomains", [])[:12]:
+            lbl = s.get("alive_label","?")
+            icon = "🟢" if lbl=="alive" else "🟡" if lbl=="cloudflare_proxy" else "⚫"
             text += f"{icon} `{s['domain']}` — {s.get('http_status','?')} ({s.get('response_time_ms','?')}ms)\n"
-        if len(d.get("subdomains", [])) > 15:
-            text += f"\n...and {len(d['subdomains'])-15} more"
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await event.reply(text, parse_mode="md")
     else:
-        await update.message.reply_text(f"❌ {data.get('message','Error')}")
+        await event.reply(f"❌ {data.get('message','Error')}")
 
-async def cmd_detect(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/detect google.com`", parse_mode="Markdown")
-        return
-    data = await api_get("detect", {"domain": context.args[0]})
+@bot.on(events.NewMessage(pattern=r"/detect ?(.*)"))
+async def cmd_detect(event):
+    d = event.pattern_match.group(1).strip()
+    if not d: return await event.reply("Usage: `/detect google.com`")
+    data = await api_get("detect", {"domain": d})
     if data.get("status") == "success":
-        d = data["data"]
-        platforms = ", ".join([x["platform"] for x in d.get("detected", [])]) or "Unknown"
+        dd = data["data"]
         text = (
-            f"**🌐 Website Detect — {d['domain']}**\n"
-            f"`IP:` {d.get('ip','?')}\n"
-            f"`Org:` {d.get('asn_org','?')}\n"
-            f"`Platform:` {d.get('platform','?')}\n"
-            f"`Signals:` {platforms}\n"
-            f"`Status:` HTTP {d.get('status_code','?')}"
+            f"**🌐 Hosting — {dd['domain']}**\n"
+            f"`IP:` {dd.get('ip','?')}\n`Org:` {dd.get('asn_org','?')}\n"
+            f"`Platform:` {dd.get('platform','?')}\n`Status:` HTTP {dd.get('status_code','?')}"
         )
-        if d.get("cname"):
-            text += f"\n`CNAME:` {', '.join(d['cname'][:2])}"
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await event.reply(text, parse_mode="md")
     else:
-        await update.message.reply_text(f"❌ {data.get('message','Error')}")
+        await event.reply(f"❌ {data.get('message','Error')}")
 
-# ─── UTILITY COMMANDS ───
-async def cmd_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/hash hello`", parse_mode="Markdown")
-        return
-    text = " ".join(context.args)
+@bot.on(events.NewMessage(pattern=r"/hash ?(.*)"))
+async def cmd_hash(event):
+    text = event.pattern_match.group(1).strip()
+    if not text: return await event.reply("Usage: `/hash hello`")
     data = await api_get("hash", {"text": text})
     if data.get("status") == "success":
-        d = data
-        msg = f"**#️⃣ Hash — `{d['text'][:50]}`**\n"
-        for algo, h in d.get("hashes", {}).items():
-            msg += f"`{algo}:` `{h[:40]}`...\n"
-        await update.message.reply_text(msg, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"❌ {data.get('message','Error')}")
+        msg = f"**#️⃣ Hash — `{text[:30]}`**\n"
+        for algo, h in data.get("hashes",{}).items():
+            msg += f"`{algo}:` `{h[:35]}...`\n"
+        await event.reply(msg, parse_mode="md")
 
-async def cmd_weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/weather Mumbai`", parse_mode="Markdown")
-        return
-    data = await api_get("weather", {"city": " ".join(context.args)})
+@bot.on(events.NewMessage(pattern=r"/weather ?(.*)"))
+async def cmd_weather(event):
+    city = event.pattern_match.group(1).strip()
+    if not city: return await event.reply("Usage: `/weather Mumbai`")
+    data = await api_get("weather", {"city": city})
     if data.get("status") == "success":
         d = data["data"]
-        text = (
-            f"**🌡 Weather — {data['city']}**\n"
-            f"`Temp:` {d.get('temp_c','?')}°C | Feels: {d.get('feels_like','?')}°C\n"
-            f"`Humidity:` {d.get('humidity','?')}%\n"
-            f"`Wind:` {d.get('wind_speed','?')} km/h\n"
-            f"`Sky:` {d.get('description','?')}"
-        )
-        await update.message.reply_text(text, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"❌ {data.get('message','Error')}")
+        await event.reply(f"**🌡 {data['city']}**\n`Temp:` {d.get('temp_c','?')}°C | `Feels:` {d.get('feels_like','?')}°C\n`Humidity:` {d.get('humidity','?')}%\n`Wind:` {d.get('wind_speed','?')} km/h\n`Sky:` {d.get('description','?')}", parse_mode="md")
 
-async def cmd_pincode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/pincode 110001`", parse_mode="Markdown")
-        return
-    data = await api_get("pin", {"pincode": context.args[0]})
+@bot.on(events.NewMessage(pattern=r"/pincode ?(.*)"))
+async def cmd_pincode(event):
+    pin = event.pattern_match.group(1).strip()
+    if not pin: return await event.reply("Usage: `/pincode 110001`")
+    data = await api_get("pin", {"pincode": pin})
     if data.get("status") == "success":
-        offices = data["data"].get("PostOffice", [])
-        text = f"**📮 PIN: {context.args[0]}** — {len(offices)} offices\n\n"
-        for o in offices[:10]:
-            text += f"• {o['Name']} ({o.get('District','?')}, {o.get('State','?')})\n"
-        if len(offices) > 10:
-            text += f"\n...and {len(offices)-10} more"
-        await update.message.reply_text(text, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"❌ {data.get('message','Error')}")
+        offices = data["data"].get("PostOffice",[])
+        text = f"**📮 PIN: {pin}** — {len(offices)} offices\n"
+        for o in offices[:8]:
+            text += f"• {o['Name']} ({o.get('District','?')})\n"
+        await event.reply(text, parse_mode="md")
 
-async def cmd_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
-    if len(args) < 3:
-        await update.message.reply_text("Usage: `/currency 100 USD INR`", parse_mode="Markdown")
-        return
+@bot.on(events.NewMessage(pattern=r"/ifsc ?(.*)"))
+async def cmd_ifsc(event):
+    code = event.pattern_match.group(1).strip().upper()
+    if not code: return await event.reply("Usage: `/ifsc SBIN0000001`")
+    data = await api_get("ifsc", {"ifsc": code})
+    if data.get("status") == "success":
+        d = data["data"]
+        await event.reply(f"**🏦 IFSC — {code}**\n`Bank:` {d['bank']}\n`Branch:` {d['branch']}\n`City:` {d['city']}\n`State:` {d['state']}", parse_mode="md")
+
+@bot.on(events.NewMessage(pattern=r"/currency ?(.*)"))
+async def cmd_currency(event):
+    args = event.pattern_match.group(1).strip().split()
+    if len(args) < 3: return await event.reply("Usage: `/currency 100 USD INR`")
     try:
-        amount = float(args[0])
-        data = await api_get("currency", {"amount": amount, "from_c": args[1].upper(), "to_c": args[2].upper()})
+        amt = float(args[0])
+        data = await api_get("currency", {"amount": amt, "from_c": args[1].upper(), "to_c": args[2].upper()})
         if data.get("status") == "success":
             d = data
-            text = (
-                f"**💱 Currency Convert**\n"
-                f"`{d['amount']} {d['from']['code']}` = `{d['result']} {d['to']['code']}`\n"
-                f"`Rate:` 1 {d['from']['code']} = {d['rate']} {d['to']['code']}"
-            )
-            await update.message.reply_text(text, parse_mode="Markdown")
-        else:
-            await update.message.reply_text(f"❌ {data.get('message','Error')}")
-    except ValueError:
-        await update.message.reply_text("Invalid amount")
+            await event.reply(f"**💱 {d['amount']} {d['from']['code']} = {d['result']} {d['to']['code']}**\n`Rate:` 1 {d['from']['code']} = {d['rate']} {d['to']['code']}", parse_mode="md")
+    except: await event.reply("Invalid amount")
 
-async def cmd_ifsc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/ifsc SBIN0000001`", parse_mode="Markdown")
-        return
-    data = await api_get("ifsc", {"ifsc": context.args[0].upper()})
-    if data.get("status") == "success":
-        d = data["data"]
-        text = f"**🏦 IFSC — {context.args[0].upper()}**\n`Bank:` {d['bank']}\n`Branch:` {d['branch']}\n`City:` {d['city']}\n`State:` {d['state']}"
-        await update.message.reply_text(text, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"❌ {data.get('message','Error')}")
-
-async def cmd_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/password MyP@ss123`", parse_mode="Markdown")
-        return
-    pw = " ".join(context.args)
+@bot.on(events.NewMessage(pattern=r"/password ?(.*)"))
+async def cmd_password(event):
+    pw = event.pattern_match.group(1).strip()
+    if not pw: return await event.reply("Usage: `/password MyP@ss123`")
     data = await api_get("password-strength", {"password": pw})
     if data.get("status") == "success":
         d = data
-        text = (
-            f"**🔑 Password Strength**\n"
-            f"`Strength:` {d['strength']}\n"
-            f"`Score:` {d['score']}/100 {d.get('level','')}\n"
-            f"`Length:` {d['length']}\n"
-            f"`Entropy:` {d.get('entropy_bits','?')} bits\n"
-            f"`Feedback:` {', '.join(d.get('feedback',[]))[:200]}"
-        )
-        await update.message.reply_text(text, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"❌ {data.get('message','Error')}")
+        await event.reply(f"**🔑 Password**\n`Strength:` {d['strength']}\n`Score:` {d['score']}/100 {d.get('level','')}\n`Entropy:` {d.get('entropy_bits','?')} bits", parse_mode="md")
 
-async def cmd_uuid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    count = 1
-    if context.args:
-        try: count = min(int(context.args[0]), 10)
-        except: pass
-    data = await api_get("uuid", {"count": count})
+@bot.on(events.NewMessage(pattern=r"/uuid ?(.*)"))
+async def cmd_uuid(event):
+    c = 1
+    try: c = min(int(event.pattern_match.group(1).strip()), 10)
+    except: pass
+    data = await api_get("uuid", {"count": c})
     if data.get("status") == "success":
-        text = f"**🆔 UUID{'s' if count>1 else ''}**\n"
-        for u in data["uuids"]:
-            text += f"`{u['uuid4']}`\n"
-        await update.message.reply_text(text, parse_mode="Markdown")
+        text = f"**🆔 UUID{'s' if c>1 else ''}**\n"
+        for u in data["uuids"]: text += f"`{u['uuid4']}`\n"
+        await event.reply(text, parse_mode="md")
 
-async def cmd_qr(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/qr https://example.com`", parse_mode="Markdown")
-        return
-    text = " ".join(context.args)
-    data = await api_get("qr", {"text": text})
-    if data.get("status") == "success":
-        await update.message.reply_text(f"📱 **QR Code:**\n{data['qr_url']}", parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"❌ {data.get('message','Error')}")
+@bot.on(events.NewMessage(pattern=r"/pan ?(.*)"))
+async def cmd_pan(event):
+    p = event.pattern_match.group(1).strip().upper()
+    if not p: return await event.reply("Usage: `/pan ABCPK1234F`")
+    data = await api_get("pan", {"pan": p})
+    await event.reply(fmt_response(data, "🆔 PAN"), parse_mode="md")
 
-async def cmd_base64(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args or len(context.args) < 2:
-        await update.message.reply_text("Usage: `/base64 encode hello` or `/base64 decode aGVsbG8=`", parse_mode="Markdown")
-        return
-    mode = context.args[0].lower()
-    rest = " ".join(context.args[1:])
-    data = await api_get("base64", {mode: rest} if mode == "decode" else {"text": rest, "mode": mode})
-    if data.get("status") == "success":
-        await update.message.reply_text(f"**🔐 Base64 {mode}**\n`Output:` `{data['output'][:500]}`", parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"❌ {data.get('message','Error')}")
+@bot.on(events.NewMessage(pattern=r"/gstin ?(.*)"))
+async def cmd_gstin(event):
+    g = event.pattern_match.group(1).strip().upper()
+    if not g: return await event.reply("Usage: `/gstin 27AABCU1234D1Z5`")
+    data = await api_get("gstin", {"gstin": g})
+    await event.reply(fmt_response(data, "🏦 GSTIN"), parse_mode="md")
 
-async def cmd_translate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/translate Hello world` or `/translate Hello world fr`", parse_mode="Markdown")
-        return
-    to = "en"
-    text_parts = context.args
-    if len(context.args) > 1 and len(context.args[-1]) == 2:
-        to = context.args[-1]
-        text_parts = context.args[:-1]
-    text = " ".join(text_parts)
-    data = await api_get("translate", {"text": text, "to": to})
-    if data.get("status") == "success":
-        await update.message.reply_text(
-            f"**🌍 Translation**\n`Original:` {data.get('original','')[:200]}\n`Translated:` {data.get('translated','')[:200]}",
-            parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"❌ {data.get('message','Error')}")
+@bot.on(events.NewMessage(pattern=r"/voter ?(.*)"))
+async def cmd_voter(event):
+    v = event.pattern_match.group(1).strip().upper()
+    if not v: return await event.reply("Usage: `/voter UKL1234567`")
+    data = await api_get("voter", {"epic": v})
+    await event.reply(fmt_response(data, "🗳 Voter"), parse_mode="md")
 
-# ─── INDIA COMMANDS ───
-async def cmd_pan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/pan ABCPK1234F`", parse_mode="Markdown")
-        return
-    data = await api_get("pan", {"pan": context.args[0].upper()})
-    await update.message.reply_text(fmt_json(data, "🆔 PAN Info"), parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/aadhaar ?(.*)"))
+async def cmd_aadhaar(event):
+    a = event.pattern_match.group(1).strip()
+    if not a: return await event.reply("Usage: `/aadhaar 123456789012`")
+    data = await api_get("aadhaar-verify", {"aadhaar": a})
+    await event.reply(fmt_response(data, "🆔 Aadhaar"), parse_mode="md")
 
-async def cmd_gstin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/gstin 27AABCU1234D1Z5`", parse_mode="Markdown")
-        return
-    data = await api_get("gstin", {"gstin": context.args[0].upper()})
-    await update.message.reply_text(fmt_json(data, "🏦 GSTIN Info"), parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/vehicle ?(.*)"))
+async def cmd_vehicle(event):
+    r = event.pattern_match.group(1).strip().upper()
+    if not r: return await event.reply("Usage: `/vehicle UP32EA1234`")
+    data = await api_get("vehicle-rc", {"registration": r})
+    await event.reply(fmt_response(data, "🚗 Vehicle"), parse_mode="md")
 
-async def cmd_voter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/voter UKL1234567`", parse_mode="Markdown")
-        return
-    data = await api_get("voter", {"epic": context.args[0].upper()})
-    await update.message.reply_text(fmt_json(data, "🗳 Voter ID"), parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/school ?(.*)"))
+async def cmd_school(event):
+    c = event.pattern_match.group(1).strip()
+    if not c: return await event.reply("Usage: `/school 123456`")
+    data = await api_get("school", {"school_code": c})
+    await event.reply(fmt_response(data, "📖 School"), parse_mode="md")
 
-async def cmd_aadhaar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/aadhaar 123456789012`", parse_mode="Markdown")
-        return
-    data = await api_get("aadhaar-verify", {"aadhaar": context.args[0]})
-    await update.message.reply_text(fmt_json(data, "🆔 Aadhaar Verify"), parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/ration ?(.*)"))
+async def cmd_ration(event):
+    a = event.pattern_match.group(1).strip()
+    if not a: return await event.reply("Usage: `/ration <number>`")
+    data = await api_get("ration", {"ration_number": a})
+    await event.reply(fmt_response(data, "🍲 Ration"), parse_mode="md")
 
-async def cmd_ration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/ration <number> [state]`", parse_mode="Markdown")
-        return
-    params = {"ration_number": context.args[0]}
-    if len(context.args) > 1: params["state"] = context.args[1]
-    data = await api_get("ration", params)
-    await update.message.reply_text(fmt_json(data, "🍲 Ration Info"), parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/breach ?(.*)"))
+async def cmd_breach(event):
+    e = event.pattern_match.group(1).strip()
+    if not e: return await event.reply("Usage: `/breach email@example.com`")
+    data = await api_get("breach", {"email": e})
+    await event.reply(fmt_response(data, "🆘 Breach"), parse_mode="md")
 
-async def cmd_samagra(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/samagra 9876543210`", parse_mode="Markdown")
-        return
-    data = await api_get("samagra", {"mobile": context.args[0]})
-    await update.message.reply_text(fmt_json(data, "👨‍👩‍👧‍👦 Samagra Info"), parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/ghuser ?(.*)"))
+async def cmd_ghuser(event):
+    u = event.pattern_match.group(1).strip()
+    if not u: return await event.reply("Usage: `/ghuser sudeepbots`")
+    data = await api_get("gh-user", {"username": u})
+    await event.reply(fmt_response(data, "🐙 GitHub"), parse_mode="md")
 
-async def cmd_school(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/school <code>`", parse_mode="Markdown")
-        return
-    data = await api_get("school", {"school_code": context.args[0]})
-    await update.message.reply_text(fmt_json(data, "📖 School Info"), parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/wayback ?(.*)"))
+async def cmd_wayback(event):
+    d = event.pattern_match.group(1).strip()
+    if not d: return await event.reply("Usage: `/wayback google.com`")
+    data = await api_get("wayback", {"domain": d, "limit": 5})
+    await event.reply(fmt_response(data, "⏳ Wayback"), parse_mode="md")
 
-async def cmd_vehicle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/vehicle UP32EA1234`", parse_mode="Markdown")
-        return
-    data = await api_get("vehicle-rc", {"registration": context.args[0].upper()})
-    await update.message.reply_text(fmt_json(data, "🚗 Vehicle RC"), parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/headers ?(.*)"))
+async def cmd_headers(event):
+    u = event.pattern_match.group(1).strip()
+    if not u: return await event.reply("Usage: `/headers https://example.com`")
+    data = await api_get("http-headers", {"url": u})
+    await event.reply(fmt_response(data, "📋 Headers"), parse_mode="md")
 
-async def cmd_challan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/challan UP32EA1234`", parse_mode="Markdown")
-        return
-    data = await api_get("challan", {"vehicle": context.args[0].upper()})
-    await update.message.reply_text(fmt_json(data, "🚦 Challan Info"), parse_mode="Markdown")
+@bot.on(events.NewMessage(pattern=r"/ssl ?(.*)"))
+async def cmd_ssl(event):
+    d = event.pattern_match.group(1).strip()
+    if not d: return await event.reply("Usage: `/ssl google.com`")
+    data = await api_get("ssl-check", {"domain": d})
+    await event.reply(fmt_response(data, "🔒 SSL"), parse_mode="md")
 
-async def cmd_breach(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/breach email@example.com`", parse_mode="Markdown")
-        return
-    data = await api_get("breach", {"email": context.args[0]})
-    await update.message.reply_text(fmt_json(data, "🆘 Breach Check"), parse_mode="Markdown")
-
-async def cmd_ghuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/ghuser sudeepbots`", parse_mode="Markdown")
-        return
-    data = await api_get("gh-user", {"username": context.args[0]})
-    await update.message.reply_text(fmt_json(data, "🐙 GitHub User"), parse_mode="Markdown")
-
-async def cmd_wayback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/wayback google.com`", parse_mode="Markdown")
-        return
-    data = await api_get("wayback", {"domain": context.args[0], "limit": 5})
-    await update.message.reply_text(fmt_json(data, "⏳ Wayback Machine"), parse_mode="Markdown")
-
-async def cmd_headers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/headers https://example.com`", parse_mode="Markdown")
-        return
-    data = await api_get("http-headers", {"url": context.args[0]})
-    await update.message.reply_text(fmt_json(data, "📋 HTTP Headers"), parse_mode="Markdown")
-
-async def cmd_ssl(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/ssl google.com`", parse_mode="Markdown")
-        return
-    data = await api_get("ssl-check", {"domain": context.args[0]})
-    await update.message.reply_text(fmt_json(data, "🔒 SSL Check"), parse_mode="Markdown")
-
-async def cmd_portscan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/portscan google.com`", parse_mode="Markdown")
-        return
-    data = await api_get("port-check", {"host": context.args[0]})
+@bot.on(events.NewMessage(pattern=r"/portscan ?(.*)"))
+async def cmd_portscan(event):
+    h = event.pattern_match.group(1).strip()
+    if not h: return await event.reply("Usage: `/portscan google.com`")
+    data = await api_get("port-check", {"host": h})
     if data.get("status") == "success":
         d = data
-        text = f"**🔌 Port Scan — {d['host']}**\n`Scanned:` {d['scanned']} | `Open:` {d['open_count']}\n"
-        for p in d.get("open_ports", []):
+        text = f"**🔌 Port Scan — {d['host']}**\n`Open:` {d['open_count']}/{d['scanned']}\n"
+        for p in d.get("open_ports",[]):
             text += f"🟢 `{p['port']}` — {p['service']}\n"
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await event.reply(text, parse_mode="md")
     else:
-        await update.message.reply_text(f"❌ {data.get('message','Error')}")
+        await event.reply(f"❌ {data.get('message','Error')}")
 
-# ─── CALLBACK ───
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    cat = query.data.replace("cat_", "")
-    
-    menus = {
-        "osint": "**🔍 OSINT Tools**\n\n`/ip` — IP geolocation\n`/email` — Email OSINT\n`/phone` — Phone lookup\n`/dns` — DNS records\n`/whois` — Domain WHOIS\n`/subdomain` — Subdomains\n`/detect` — Hosting detect\n`/breach` — Breach check\n`/ghuser` — GitHub user\n`/wayback` — Wayback Machine\n`/headers` — HTTP headers\n`/ssl` — SSL check\n`/portscan` — Port scanner",
-        "utils": "**🛠 Utilities**\n\n`/hash` — Hash generator\n`/base64` — Base64 encode/decode\n`/uuid` — UUID generator\n`/qr` — QR code\n`/currency` — Currency converter\n`/translate` — Translation\n`/weather` — Weather\n`/pincode` — PIN code\n`/password` — Password strength\n`/ifsc` — IFSC lookup",
-        "india": "**🇮🇳 India Tools**\n\n`/pan` — PAN card\n`/gstin` — GST info\n`/voter` — Voter ID\n`/aadhaar` — Aadhaar verify\n`/ration` — Ration card\n`/samagra` — MP Samagra\n`/school` — UDISE+ school\n`/vehicle` — Vehicle RC\n`/challan` — e-Challan",
-        "web": "**🌐 Web Tools**\n\n`/qr` — QR generator\n`/currency` — Currency convert\n`/translate` — Text translate\n`/headers` — HTTP headers\n`/ssl` — SSL check\n`/portscan` — Port scan\n`/wayback` — Web archive\n`/detect` — Hosting detect"
-    }
-    
-    text = menus.get(cat, "Select a category")
-    kb = [[InlineKeyboardButton("◀️ Back", callback_data="cat_back")]]
-    
+@bot.on(events.NewMessage(pattern=r"/base64 ?(.*)"))
+async def cmd_base64(event):
+    args = event.pattern_match.group(1).strip().split(maxsplit=1)
+    if len(args) < 2: return await event.reply("Usage: `/base64 encode hello` or `/base64 decode aGVsbG8=`")
+    mode, text = args[0], args[1]
+    import base64
+    try:
+        if mode == "encode":
+            out = base64.b64encode(text.encode()).decode()
+            await event.reply(f"**🔐 Encoded:** `{out[:400]}`", parse_mode="md")
+        elif mode == "decode":
+            out = base64.b64decode(text).decode()
+            await event.reply(f"**🔓 Decoded:** `{out[:400]}`", parse_mode="md")
+    except: await event.reply("❌ Invalid base64")
+
+@bot.on(events.NewMessage(pattern=r"/translate ?(.*)"))
+async def cmd_translate(event):
+    args = event.pattern_match.group(1).strip()
+    if not args: return await event.reply("Usage: `/translate Hello world` or `/translate Hello world fr`")
+    parts = args.split()
+    to_lang = "en"
+    text_parts = parts
+    if len(parts) > 1 and len(parts[-1]) == 2:
+        to_lang = parts[-1]
+        text_parts = parts[:-1]
+    text = " ".join(text_parts)
+    data = await api_get("translate", {"text": text, "to": to_lang})
+    if data.get("status") == "success":
+        await event.reply(f"**🌍 Translation**\n`{data.get('original','')[:200]}` → `{data.get('translated','')[:200]}`", parse_mode="md")
+
+@bot.on(events.NewMessage(pattern=r"/qr ?(.*)"))
+async def cmd_qr(event):
+    text = event.pattern_match.group(1).strip()
+    if not text: return await event.reply("Usage: `/qr https://example.com`")
+    data = await api_get("qr", {"text": text})
+    if data.get("status") == "success":
+        await event.reply(f"📱 **QR:** [Click here]({data['qr_url']})", parse_mode="md")
+
+# ─── CALLBACK HANDLER ───
+menus = {
+    "osint": "**🔍 OSINT Tools**\n`/ip` `/email` `/phone` `/dns` `/whois` `/subdomain` `/detect` `/breach` `/ghuser` `/wayback` `/headers` `/ssl` `/portscan`",
+    "utils": "**🛠 Utilities**\n`/hash` `/base64` `/uuid` `/qr` `/currency` `/translate` `/weather` `/pincode` `/password` `/ifsc`",
+    "india": "**🇮🇳 India**\n`/pan` `/gstin` `/voter` `/aadhaar` `/ration` `/vehicle` `/school`",
+    "web": "**🌐 Web Tools**\n`/qr` `/currency` `/translate` `/headers` `/ssl` `/portscan` `/wayback` `/detect`"
+}
+
+@bot.on(events.CallbackQuery)
+async def callback(event):
+    data = event.data.decode()
+    cat = data.replace("cat_","")
     if cat == "back":
-        kb = [
-            [InlineKeyboardButton("🔍 OSINT", callback_data="cat_osint"),
-             InlineKeyboardButton("🛠 Utilities", callback_data="cat_utils")],
-            [InlineKeyboardButton("🇮🇳 India", callback_data="cat_india"),
-             InlineKeyboardButton("🌐 Web Tools", callback_data="cat_web")]
-        ]
-        text = "**📂 Select Category:**"
-    
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        kb = {"inline_keyboard": [
+            [{"text":"🔍 OSINT","callback_data":"cat_osint"},{"text":"🛠 Utilities","callback_data":"cat_utils"}],
+            [{"text":"🇮🇳 India","callback_data":"cat_india"},{"text":"🌐 Web","callback_data":"cat_web"}]
+        ]}
+        await event.edit("**📂 Select Category:**", buttons=kb)
+    else:
+        back_kb = {"inline_keyboard": [[{"text":"◀️ Back","callback_data":"cat_back"}]]}
+        text = menus.get(cat, "Unknown")
+        await event.edit(text, buttons=back_kb)
 
-# ─── MAIN ───
-def main():
-    if not BOT_TOKEN:
-        logger.error("BOT_TOKEN not set!")
-        sys.exit(1)
+# ─── WEBHOOK ENDPOINT ───
+@app.post(f"/{BOT_TOKEN}")
+async def webhook(request: Request):
+    update_data = await request.json()
+    await bot.process_update(update_data)
+    return {"ok": True}
+
+@app.get("/")
+@app.get("/health")
+async def health():
+    return {"status": "ok", "bot": "DevsToolsBot", "framework": "Telethon+FastAPI"}
+
+# ─── STARTUP ───
+@app.on_event("startup")
+async def startup():
+    logger.info("Starting bot...")
+    await bot.start(bot_token=BOT_TOKEN)
+    me = await bot.get_me()
+    logger.info(f"Bot running: @{me.username}")
     
-    app = Application.builder().token(BOT_TOKEN).build()
-    
-    # OSINT
-    app.add_handler(CommandHandler("ip", cmd_ip))
-    app.add_handler(CommandHandler("email", cmd_email))
-    app.add_handler(CommandHandler("phone", cmd_phone))
-    app.add_handler(CommandHandler("dns", cmd_dns))
-    app.add_handler(CommandHandler("whois", cmd_whois))
-    app.add_handler(CommandHandler("subdomain", cmd_subdomain))
-    app.add_handler(CommandHandler("detect", cmd_detect))
-    app.add_handler(CommandHandler("breach", cmd_breach))
-    app.add_handler(CommandHandler("ghuser", cmd_ghuser))
-    app.add_handler(CommandHandler("wayback", cmd_wayback))
-    app.add_handler(CommandHandler("headers", cmd_headers))
-    app.add_handler(CommandHandler("ssl", cmd_ssl))
-    app.add_handler(CommandHandler("portscan", cmd_portscan))
-    
-    # Utilities
-    app.add_handler(CommandHandler("hash", cmd_hash))
-    app.add_handler(CommandHandler("base64", cmd_base64))
-    app.add_handler(CommandHandler("uuid", cmd_uuid))
-    app.add_handler(CommandHandler("qr", cmd_qr))
-    app.add_handler(CommandHandler("currency", cmd_currency))
-    app.add_handler(CommandHandler("translate", cmd_translate))
-    app.add_handler(CommandHandler("weather", cmd_weather))
-    app.add_handler(CommandHandler("pincode", cmd_pincode))
-    app.add_handler(CommandHandler("password", cmd_password))
-    app.add_handler(CommandHandler("ifsc", cmd_ifsc))
-    
-    # India
-    app.add_handler(CommandHandler("pan", cmd_pan))
-    app.add_handler(CommandHandler("gstin", cmd_gstin))
-    app.add_handler(CommandHandler("voter", cmd_voter))
-    app.add_handler(CommandHandler("aadhaar", cmd_aadhaar))
-    app.add_handler(CommandHandler("ration", cmd_ration))
-    app.add_handler(CommandHandler("samagra", cmd_samagra))
-    app.add_handler(CommandHandler("school", cmd_school))
-    app.add_handler(CommandHandler("vehicle", cmd_vehicle))
-    app.add_handler(CommandHandler("challan", cmd_challan))
-    
-    # General
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("tools", tools))
-    
-    # Callback
-    # Callback
-    app.add_handler(CallbackQueryHandler(button_callback))
-    
-    # Start health check server in background
-    async def health_server():
-        from aiohttp import web
-        app_web = web.Application()
-        async def health(request):
-            return web.Response(text="OK")
-        app_web.router.add_get("/", health)
-        app_web.router.add_get("/health", health)
-        runner = web.AppRunner(app_web)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", PORT)
-        await site.start()
-        logger.info(f"Health server on :{PORT}")
-        await asyncio.Event().wait()
-    
-    asyncio.ensure_future(health_server())
-    
-    logger.info("Bot starting with polling...")
-    app.run_polling(allowed_updates=["message", "callback_query"])
+    # Set webhook
+    webhook_url = f"{WEBHOOK_URL}/{BOT_TOKEN}"
+    await bot.set_webhook(webhook_url)
+    logger.info(f"Webhook set: {webhook_url[:60]}...")
+
+@app.on_event("shutdown")
+async def shutdown():
+    await bot.disconnect()
 
 if __name__ == "__main__":
-    main()
+    uvicorn.run(app, host="0.0.0.0", port=PORT)

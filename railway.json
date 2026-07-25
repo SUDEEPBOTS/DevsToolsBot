@@ -1,8 +1,5 @@
 {
   "build": {
     "builder": "NIXPACKS"
-  },
-  "start": {
-    "command": "python3 bot.py"
   }
 }
