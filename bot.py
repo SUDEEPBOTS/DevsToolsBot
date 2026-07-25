@@ -567,12 +567,8 @@ def main():
     app.add_handler(CommandHandler("tools", tools))
     
     # Callback
-    app.add_handler(MessageHandler(filters.COMMAND, None))
-    try:
-        from telegram.ext import CallbackQueryHandler
-        app.add_handler(CallbackQueryHandler(button_callback))
-    except:
-        pass
+    # Callback
+    app.add_handler(CallbackQueryHandler(button_callback))
     
     # Start health check server in background
     async def health_server():
