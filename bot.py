@@ -19,7 +19,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL", f"https://devstoolsbot-production.up
 app = FastAPI(title="DevsToolsBot")
 
 # PTB Application
-ptb_app = Application.builder().token(BOT_TOKEN).build()
+ptb_app = Application.builder().token(BOT_TOKEN).concurrent_updates(True).build()
 
 # ─── API ───
 async def api_get(endpoint: str, params: dict = None) -> dict:
@@ -255,7 +255,8 @@ async def webhook(request: Request):
     try:
         data = await request.json()
         update = Update.de_json(data, ptb_app.bot)
-        await ptb_app.process_update(update)
+        # Process in background to avoid blocking
+        asyncio.ensure_future(ptb_app.process_update(update))
         return {"ok": True}
     except Exception as e:
         logger.error(f"Webhook error: {e}")
