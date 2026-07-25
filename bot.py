@@ -457,10 +457,11 @@ async def startup():
     me = await bot.get_me()
     logger.info(f"Bot running: @{me.username}")
     
-    # Set webhook
+    # Set webhook via Bot API directly
     webhook_url = f"{WEBHOOK_URL}/{BOT_TOKEN}"
-    await bot.set_webhook(webhook_url)
-    logger.info(f"Webhook set: {webhook_url[:60]}...")
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook", params={"url": webhook_url})
+        logger.info(f"Webhook set: {resp.json()}")
 
 @app.on_event("shutdown")
 async def shutdown():
