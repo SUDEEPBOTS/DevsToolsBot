@@ -581,7 +581,7 @@ def main():
         port=PORT,
         url_path=BOT_TOKEN,
         webhook_url=f"https://devstoolsbot.up.railway.app/{BOT_TOKEN}",
-        secret_token=BOT_TOKEN[:20]
+        secret_token="devstoolsbot2026"
     )
 
 if __name__ == "__main__":
