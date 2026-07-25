@@ -1,6 +1,6 @@
-import os, sys, json, logging
+import os, sys, json, logging, asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import httpx
 
 # Config
@@ -573,6 +573,23 @@ def main():
         app.add_handler(CallbackQueryHandler(button_callback))
     except:
         pass
+    
+    # Start health check server in background
+    async def health_server():
+        from aiohttp import web
+        app_web = web.Application()
+        async def health(request):
+            return web.Response(text="OK")
+        app_web.router.add_get("/", health)
+        app_web.router.add_get("/health", health)
+        runner = web.AppRunner(app_web)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", PORT)
+        await site.start()
+        logger.info(f"Health server on :{PORT}")
+        await asyncio.Event().wait()
+    
+    asyncio.ensure_future(health_server())
     
     logger.info("Bot starting with polling...")
     app.run_polling(allowed_updates=["message", "callback_query"])
